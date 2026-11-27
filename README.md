@@ -1,453 +1,381 @@
 Digital Banking Core Platform
-A backend banking platform built with Spring Boot, PostgreSQL, Kafka, Keycloak, Flyway, JPA, and OpenAPI.
-The platform provides account transfers, double-entry ledger processing, idempotency, fraud controls, KYC workflow, Kafka events, account statements, and OAuth2/JWT authentication.
+
+A backend digital banking platform developed using Java 21, Spring Boot, PostgreSQL, Apache Kafka, and Keycloak.
+
+The system provides core banking operations, including customer and account management, secure money transfers, double-entry bookkeeping, transaction processing, fraud prevention, and KYC management.
+
+Developed as part of the Nexvia Technologies Backend Development Internship.
 
 ⸻
 
 Features
-• Customer and bank account management
-• Account-to-account transfers
-• Double-entry bookkeeping
-• Atomic database transactions
-• Idempotent transfers
-• Transfer amount and velocity fraud rules
-• KYC submission, approval, and rejection
-• Kafka transfer events
-• Kafka event consumer
-• Account statements
-• Keycloak OAuth2 / JWT authentication
-• Protected REST APIs
-• Swagger / OpenAPI documentation
-• PostgreSQL persistence
-• Flyway database migrations
-• Dockerized Kafka infrastructure
+
+Banking Operations
+
+* Customer management
+* Bank account management
+* Account-to-account money transfers
+* Account statements
+* Transaction history
+
+Transaction Processing
+
+* Double-entry ledger bookkeeping
+* Atomic database transactions
+* Idempotency protection against duplicate transfers
+* Sender and receiver balance updates
+
+Fraud Prevention
+
+* Maximum transfer amount validation
+* Transaction velocity limits
+* Transfer validation before processing
+
+KYC Management
+
+* KYC submission
+* KYC status retrieval
+* KYC approval and rejection
+
+Event-Driven Communication
+
+* Kafka transfer event publishing
+* Kafka event consumer
+* Asynchronous event processing
+
+Security
+
+* Keycloak identity provider
+* OAuth2 Authorization Code Flow
+* JWT bearer token authentication
+* Spring Security Resource Server
+* Protected REST API endpoints
+
+⸻
+
+Technology Stack
+
+Technology	Purpose
+Java 21	Programming language
+Spring Boot 4.2.0	Backend framework
+Spring Security	Authentication and authorization
+Spring Data JPA	Database persistence
+PostgreSQL 18	Relational database
+Apache Kafka 4.0.1	Event-driven messaging
+Keycloak 26.8.2	Identity and access management
+Flyway	Database schema migrations
+Swagger / OpenAPI	API documentation
+Docker Compose	Infrastructure management
+Maven	Build and dependency management
 
 ⸻
 
 Architecture
-                         +-—————--------------——+
-                         |     Client / User    |
-                         +-———------+-------————+
-                                    |
-                                    v
-                         +-———————--------------+
-                         |   Swagger / REST API |
-                         +-———————--+-----------+
-                                    |
-                                    v
-                         +-———————--------------+
-                         |      Keycloak        |
-                         |   OAuth2 / JWT       |
-                         +-———————--+-----------+
-                                    |
-                          Bearer JWT validation
-                                    |
-                                    v
-                    +——————————-----+---------------+
-                    |       Spring Boot API         |
-                    |                               |
-                    |  Transfer   KYC   Statement   |
-                    +-——————-+————------------------+
-                             |
-             +—————+—————+---+-------------+
-             |                             |
-             v                             v
-      +-————--------+              +—————----------+
-      | PostgreSQL  |              |     Kafka     |
-      |             |              | completed-    |
-      | Customers   |              | transfers     |
-      | Accounts    |              +-————----------+
-      | Transactions|                      |
-      | Ledger      |                      v
-      | KYC         |              +—————-----------+
-      +-————--------+              | Kafka Consumer |
-                                   +—————-----------+
 
-⸻
+The application follows a layered backend architecture with separate responsibilities for API controllers, business logic, persistence, authentication, and event messaging.
 
-Authentication and Security
-The API is protected using Keycloak OAuth2 with JWT bearer tokens.
-Authentication flow:
-User
-  |
-  v
-Keycloak
-  |
-  | OAuth2 Authorization Code
-  v
-Access Token (JWT)
-  |
-  v
-Swagger / API Client
-  |
-  | Authorization: Bearer <token>
-  v
-Spring Boot Resource Server
-  |
-  v
-Protected API
-Public API documentation endpoints:
-/swagger-ui/**
-/v3/api-docs/**
-Application endpoints require authentication.
-Keycloak realm:
-digital-banking
-OAuth2 issuer:
-http://localhost:8081/realms/digital-banking
+flowchart TB
+    U["Client / User"]
+    SW["Swagger UI / REST API"]
+    KC["Keycloak<br/>OAuth2 / JWT"]
+    subgraph APP["Spring Boot Application"]
+        SEC["SecurityConfig"]
+        CTRL["REST Controllers"]
+        SERVICE["TransferService"]
+        REPO["Repositories"]
+        EVENT["Kafka Producer / Consumer"]
+        ERR["GlobalExceptionHandler"]
+    end
+    DB[("PostgreSQL")]
+    KAFKA[["Apache Kafka"]]
+    U --> SW
+    SW --> SEC
+    KC --> SEC
+    SEC --> CTRL
+    CTRL --> SERVICE
+    SERVICE --> REPO
+    REPO <--> DB
+    SERVICE --> EVENT
+    EVENT <--> KAFKA
+    CTRL -.-> ERR
 
-⸻
+Main Components
 
-Transfer Flow
-A transfer follows these steps:
-1. Client authenticates with Keycloak.
-2. Client sends a transfer request with a JWT.
-3. API validates the request.
-4. Idempotency key is checked.
-5. Fraud rules are evaluated.
-6. Sender balance is decreased.
-7. Receiver balance is increased.
-8. Transaction is stored.
-9. Debit and credit ledger entries are created.
-10. The completed transfer event is published to Kafka.
-11. Kafka consumer receives the event.
-All database changes occur inside a transactional operation.
-
-⸻
-
-Double-Entry Ledger
-Every successful transfer creates two ledger entries.
-Example for a $200 transfer:
-Sender:
-DEBIT   -200.00
-
-Receiver:
-CREDIT  +200.00
-
--—————
-Total      0.00
-The ledger therefore remains balanced for every completed transfer.
-
-⸻
-
-Idempotency
-Transfers require a unique idempotencyKey.
-Example:
-{
-  “fromAccountId”: 4,
-  “toAccountId”: 3,
-  “amount”: 100,
-  “idempotencyKey”: “demo-100-1”
-}
-First request:
-Transfer successful
-Repeating the same request with the same idempotency key:
-Transfer already processed
-This prevents accidental duplicate transactions.
-
-⸻
-
-Fraud Rules
-The current implementation includes simple fraud controls:
-Transfer amount limit
-Maximum transfer amount:
-5000
-Transfers above this limit are rejected.
-Transfer velocity
-An account is limited to:
-3 outgoing transfers
-within the implemented transaction-count rule.
-Rejected requests return:
-400 Bad Request
-
-⸻
-
-KYC Workflow
-The platform provides a simple KYC lifecycle:
-PENDING
-   |
-   +-—> APPROVED
-   |
-   +-—> REJECTED
-Submit KYC
-POST /api/kyc?customerId={id}
-Get KYC
-GET /api/kyc/{id}
-Approve KYC
-PUT /api/kyc/{id}/approve
-Reject KYC
-PUT /api/kyc/{id}/reject
-
-⸻
-
-Account Statements
-GET /api/accounts/{accountId}/statement
-Returns the ledger entries associated with an account.
-Example:
-[
-  {
-    “id”: 5,
-    “entryType”: “CREDIT”,
-    “amount”: 200.00,
-    “createdAt”: “2026-11-25T...”
-  }
-]
-
-⸻
-
-Kafka
-Completed transfers generate events on:
-completed-transfers
-Example event:
-{
-  “transactionId”: 4,
-  “fromAccountId”: 4,
-  “toAccountId”: 3,
-  “amount”: 200,
-  “status”: “COMPLETED”
-}
-The Kafka consumer listens to the same topic and processes completed transfer events.
-Kafka is used to demonstrate asynchronous event-driven processing for completed transactions.
-
-⸻
-
-Database
-PostgreSQL database:
-digital_banking
-Main tables:
-customers
-accounts
-transactions
-ledger_entries
-kyc
-Relationships
-customers
-    |
-    +-— accounts
-              |
-              +-— transactions
-              |
-              +-— ledger_entries
-
-customers
-    |
-    +-— kyc
-
-⸻
-
-## Authentication & Security
-
-- OAuth2 Authorization Code Flow
-- Keycloak identity provider
-- JWT-based authentication
-- Spring Security Resource Server
-- Protected API endpoints
-- Swagger UI OAuth2 integration
-
-### Test Authentication
-
-1. Open Swagger UI: http://localhost:8080/swagger-ui/index.html
-2. Click Authorize.
-3. Log in using your Keycloak user.
-4. Execute a protected endpoint.
-5. Verify the response returns '200 OK'.
-
-⸻
-
-API Endpoints
-Transfers
-POST /api/transfers
-Account Statements
-GET /api/accounts/{accountId}/statement
-KYC
-POST /api/kyc?customerId={id}
-GET  /api/kyc/{id}
-PUT  /api/kyc/{id}/approve
-PUT  /api/kyc/{id}/reject
-All application endpoints require a valid OAuth2/JWT access token.
-
-⸻
-
-Swagger / OpenAPI
-Swagger UI:
-http://localhost:8080/swagger-ui/index.html
-The Swagger UI is configured with OAuth2 Authorization Code flow and integrates with the Keycloak realm.
-After authentication, Swagger sends the JWT as a Bearer token when calling protected endpoints.
-
-⸻
-
-Technologies
-• Java 21
-• Spring Boot 4.2
-• Spring Web
-• Spring Data JPA
-• Spring Security
-• OAuth2 Resource Server
-• Keycloak 26.8.2
-• PostgreSQL
-• Flyway
-• Apache Kafka 4.0.1
-• Spring Kafka
-• Docker
-• OpenAPI / Swagger
+Component	Responsibility
+Controllers	Handle incoming REST API requests
+TransferService	Manage transfer business logic
+Repositories	Handle database access
+SecurityConfig	Configure API security
+OpenApiConfig	Configure Swagger OAuth2 documentation
+TransferEventProducer	Publish transfer events
+TransferEventConsumer	Consume Kafka events
+GlobalExceptionHandler	Handle application exceptions
+Flyway	Manage database migrations
 
 ⸻
 
 Project Structure
+
 digital-banking/
+
 │
+
+├── .mvn/
+
+│
+
+├── docs/
+
+│   └── architecture.png
+
+│
+
 ├── src/
-│   └── main/
-│       ├── java/com/nexvia/digital_banking/
-│       │
-│       │── Account.java
-│       │── AccountRepository.java
-│       │── BankTransaction.java
-│       │── Customer.java
-│       │── DigitalBankingApplication.java
-│       │── GlobalExceptionHandler.java
-│       │── Kyc.java
-│       │── KycController.java
-│       │── KycRepository.java
-│       │── LedgerEntry.java
-│       │── LedgerEntryRepository.java
-│       │── OpenApiConfig.java
-│       │── SecurityConfig.java
-│       │── StatementController.java
-│       │── TransactionRepository.java
-│       │── TransferController.java
-│       │── TransferEvent.java
-│       │── TransferEventConsumer.java
-│       │── TransferEventProducer.java
-│       │── TransferRequest.java
-│       │── TransferService.java
+
+│   │
+
+│   ├── main/
+
+│   │   │
+
+│   │   ├── java/com/nexvia/digital_banking/
+
+│   │   │   │
+
+│   │   │   ├── DigitalBankingApplication.java
+
+│   │   │   │
+
+│   │   │   ├── Account.java
+
+│   │   │   ├── AccountRepository.java
+
+│   │   │   ├── Customer.java
+
+│   │   │   ├── BankTransaction.java
+
+│   │   │   ├── TransactionRepository.java
+
+│   │   │   ├── LedgerEntry.java
+
+│   │   │   ├── LedgerEntryRepository.java
+
+│   │   │   │
+
+│   │   │   ├── TransferController.java
+
+│   │   │   ├── TransferService.java
+
+│   │   │   ├── TransferRequest.java
+
+│   │   │   │
+
+│   │   │   ├── TransferEvent.java
+
+│   │   │   ├── TransferEventProducer.java
+
+│   │   │   ├── TransferEventConsumer.java
+
+│   │   │   │
+
+│   │   │   ├── StatementController.java
+
+│   │   │   │
+
+│   │   │   ├── Kyc.java
+
+│   │   │   ├── KycController.java
+
+│   │   │   ├── KycRepository.java
+
+│   │   │   │
+
+│   │   │   ├── SecurityConfig.java
+
+│   │   │   ├── OpenApiConfig.java
+
+│   │   │   └── GlobalExceptionHandler.java
+
+│   │   │
+
+│   │   └── resources/
+
+│   │       │
+
+│   │       ├── application.properties
+
+│   │       │
+
+│   │       └── db/
+
+│   │           └── migration/
+
+│   │               ├── V1__create_core_tables.sql
+
+│   │               └── V2__create_kyc.sql
+
+│   │
+
+│   └── test/
+
+│       └── java/com/nexvia/digital_banking/
+
+│           └── DigitalBankingApplicationTests.java
+
 │
-│       └── resources/
-│           ├── db/migration/
-│           └── application.properties
-│
+
 ├── docker-compose.yml
+
 ├── pom.xml
+
+├── mvnw
+
+├── mvnw.cmd
+
+├── .gitignore
+
+├── .gitattributes
+
 └── README.md
 
+
 ⸻
 
-Running the Project
-1. Start infrastructure
+Database & Migrations
+
+PostgreSQL is used as the primary relational database.
+
+Flyway manages database schema migrations.
+
+Current migration files:
+
+* V1__create_core_tables.sql — Core banking tables.
+* V2__create_kyc.sql — KYC table.
+
+⸻
+
+Authentication & Security
+
+The application uses Keycloak for identity management and OAuth2 authentication.
+
+Authentication Flow
+
+1. The user opens Swagger UI.
+2. The user authenticates through Keycloak.
+3. Keycloak issues an access token.
+4. Swagger sends the JWT bearer token with API requests.
+5. Spring Security validates the token.
+6. Authenticated users can access protected endpoints.
+
+Keycloak Realm: digital-banking
+
+Authentication Protocol: OAuth2 Authorization Code Flow
+
+Token Type: JWT Bearer Token
+
+Public Documentation Endpoints
+
+* /swagger-ui/**
+* /v3/api-docs/**
+
+Other API endpoints require authentication.
+
+⸻
+
+Kafka Event Processing
+
+Apache Kafka is used for transfer event messaging.
+
+The application includes:
+
+* TransferEvent — Transfer event data.
+* TransferEventProducer — Publishes transfer events.
+* TransferEventConsumer — Receives and processes events.
+
+This provides an event-driven communication mechanism for transfer-related operations.
+
+⸻
+
+Running the Application
+
+Prerequisites
+
+* Java 21
+* Maven
+* PostgreSQL
+* Docker
+* Apache Kafka
+* Keycloak
+
+1. Clone the Repository
+
+git clone https://github.com/feras-alkhoury/digital-banking.git
+cd digital-banking
+
+2. Configure Application Properties
+
+Update src/main/resources/application.properties with your local PostgreSQL, Kafka, and Keycloak configuration.
+
+Do not commit passwords, secrets, or production credentials.
+
+3. Start Infrastructure
+
+Start the required infrastructure services using your configured Docker Compose setup.
+
 docker compose up -d
-This starts the Kafka infrastructure and Keycloak services configured for the project.
-2. Start Spring Boot
-Windows:
+
+Ensure PostgreSQL, Kafka, and Keycloak are available with the configured connection settings.
+
+4. Run the Application
+
+On Windows:
+
 .\mvnw.cmd spring-boot:run
-3. Open Swagger
-http://localhost:8080/swagger-ui/index.html
-4. Authenticate
-Use the Swagger Authorize button and authenticate through the digital-banking Keycloak realm.
-After successful authentication, protected endpoints can be executed from Swagger.
+
+On Linux / macOS:
+
+./mvnw spring-boot:run
 
 ⸻
 
-Authentication Verification
-The authentication flow was verified through Swagger:
-Swagger
-   |
-   v
-Keycloak login
-   |
-   v
-OAuth2 authorization
-   |
-   v
-JWT access token
-   |
-   v
-Protected Spring Boot endpoint
-   |
-   v
-200 OK
-A protected account statement endpoint was successfully executed after authentication.
+API Documentation
+
+After starting the application, open:
+
+Swagger UI
+
+http://localhost:8080/swagger-ui/index.html
+
+Swagger provides interactive API documentation and allows authenticated endpoint testing.
 
 ⸻
 
 Testing
-The following functionality was manually verified through Swagger and the running application:
-• Successful account transfer
-• Duplicate transfer protection using idempotency keys
-• Insufficient balance validation
-• Transfer amount fraud limit
-• Transfer velocity rule
-• Double-entry ledger creation
-• Account statement retrieval
-• KYC submission
-• KYC approval
-• KYC rejection
-• Kafka producer
-• Kafka consumer
-• OAuth2 authentication through Keycloak
-• JWT-protected API access
-• Swagger OAuth2 authorization
-Automated tests are also included in the project.
-Run:
-.\mvnw.cmd test
+
+The project was tested using Maven:
+
+.\mvnw.cmd clean test
+
+Latest recorded test results:
+
+Test Result	Count
+Tests run	1
+Failures	0
+Errors	0
+Skipped	0
+
+Build Status: BUILD SUCCESS
 
 ⸻
 
-Project Status
-Core Banking
-• ☑ Customers
-• ☑ Accounts
-• ☑ Transfers
-• ☑ Atomic transactions
-• ☑ Double-entry ledger
-• ☑ Idempotency
-• ☑ Fraud rules
-• ☑ Account statements
-Security
-• ☑ Keycloak
-• ☑ OAuth2 Authorization Code flow
-• ☑ JWT authentication
-• ☑ Protected API endpoints
-• ☑ Swagger OAuth2 integration
-KYC
-• ☑ KYC submission
-• ☑ KYC retrieval
-• ☑ KYC approval
-• ☑ KYC rejection
-Event-Driven Processing
-• ☑ Kafka producer
-• ☑ Kafka topic
-• ☑ Kafka consumer
-• ☑ Completed transfer events
-Documentation
-• ☑ Swagger / OpenAPI
-• ☑ README
-• ☑ Architecture documentation
-• ☑ API documentation
-• ☑ Test documentation
+Repository
+
+GitHub: https://github.com/feras-alkhoury/digital-banking
 
 ⸻
 
-Future Improvements
-• Role-based authorization for separate customer/admin permissions
-• Advanced fraud detection
-• Notification service
-• Production deployment
-• Distributed tracing
-• Metrics and monitoring
-• Comprehensive load and performance testing
-• High-availability Kafka configuration
-• Automated integration testing with containers
+Author
 
-⸻
+Feras Alkhoury
 
-Project Deliverables
-The project demonstrates:
-1. Banking account and transfer processing
-2. Double-entry financial ledger
-3. Atomic database operations
-4. Idempotent transaction handling
-5. Fraud prevention rules
-6. KYC workflow
-7. Event-driven Kafka processing
-8. OAuth2/JWT security with Keycloak
-9. Protected REST APIs
-10. OpenAPI documentation
+Backend Development Internship Project — Nexvia Technologies
